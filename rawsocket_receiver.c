@@ -47,7 +47,6 @@ int sendback_rx_report = 0;
 char cpu_id[20];
 char rx_cpu_usage[128];
 queue_t *rxQueue = NULL;
-
 //************************************************************************************
 // getMTU
 //************************************************************************************
@@ -79,7 +78,29 @@ int getMTU(char *name)
 
     return mtu;
 }
+int bind_rawsocket_to_interface(char *device, int rawsock, int protocol)
+{
+	struct sockaddr_ll sll;
+	struct ifreq ifr;
 
+	memset(&sll, 0, sizeof(sll));
+	memset(&ifr, 0, sizeof(ifr));
+	/* First Get the Interface Index  */
+	strncpy((char *)ifr.ifr_name, device, IFNAMSIZ);
+	if((ioctl(rawsock, SIOCGIFINDEX, &ifr)) == -1) {
+		printf("Error getting Interface index !\n");
+		exit(-1);
+	}
+	/* Bind our raw socket to this interface */
+	sll.sll_family = PF_PACKET;
+	sll.sll_ifindex = ifr.ifr_ifindex;
+	sll.sll_protocol = htons(protocol);
+	if((bind(rawsock, (struct sockaddr *)&sll, sizeof(sll)))== -1) {
+		perror("Error binding raw socket to interface\n");
+		exit(-1);
+	}
+	return 1;
+}
 //************************************************************************************
 // get local mac
 //************************************************************************************
@@ -115,6 +136,8 @@ int main(int argc, char* argv[])
 	double data_interval;
     double estimated_bandwidth;
 	unsigned long long serno = 1;
+	unsigned long long serno_r = 1;
+	
 	float percentage;
     unsigned long long total_receive=0;
    
@@ -128,7 +151,7 @@ int main(int argc, char* argv[])
     // get local mac (reviver)
     //
     get_local_mac(mac_reciver);
-    printf("mac_reciver : %.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n" , mac_reciver[0], mac_reciver[1], mac_reciver[2], mac_reciver[3], mac_reciver[4], mac_reciver[5]);
+    //printf("mac_reciver : %.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n" , mac_reciver[0], mac_reciver[1], mac_reciver[2], mac_reciver[3], mac_reciver[4], mac_reciver[5]);
     //
     // get MTU
     //
@@ -143,6 +166,7 @@ int main(int argc, char* argv[])
         perror("error in socket\n");
         return -1;
     }
+	bind_rawsocket_to_interface(ifname,sock_r,ETH_P_ALL);
     // create buffer to receive data
     unsigned char *buffer = (unsigned char *) malloc(65536); 
     memset(buffer, 0, 65536);
@@ -151,41 +175,32 @@ int main(int argc, char* argv[])
     unsigned char *recv_data = buffer + SIZE_ETHHDR;
     rx_result.bytes = 0;
     int is_got_1st_pak = 0;
+	
     while(1)   
     {
-        int numbytes = read(sock_r, buffer, 65536);
+        int numbytes = read(sock_r, buffer, eth_MTU );
+		serno_r++;
         if(numbytes < 0){
             perror("error in reading recvfrom function\n");
-            return -1;
-        }
-        else{
-            //
-            // only check paks for our mac address
-            //
-            struct ethhdr *eth = (struct ethhdr *)(buffer);
-            if(memcmp(eth->h_source, mac_reciver, 6) == 0){
-                // check pak id
-                //
-                if(strncmp(recv_data, "ing", strlen("ing")) == 0){
-					//printf("recv = %s, len = %d\n", recv_data, numbytes);
-
-                    rx_result.bytes += numbytes;
-					total_number_bytes += numbytes;
-					serno++;
-                }
-                else if(strncmp(recv_data, "end", strlen("end")) == 0){
-				
-					char *s = strtok(recv_data, "-");
-					char *s1 = strtok(NULL, "-");
-					duration=atoi(s1);
-					char *s2 = strtok(NULL, "-");
-					total_receive=atol(s2);
-                    break; 
-                }
-
+            exit(-1);
+        }else{
+			if(strncmp(recv_data, "ing", strlen("ing")) == 0){
+				//printf("recv = %s, len = %d\n", recv_data, numbytes);
+				rx_result.bytes += numbytes;
+				total_number_bytes += numbytes;
+				serno++;
+            }else if(strncmp(recv_data, "end", strlen("end")) == 0){
+				char *s = strtok(recv_data, "-");
+				char *s1 = strtok(NULL, "-");
+				duration=atoi(s1);
+				char *s2 = strtok(NULL, "-");
+				total_receive=atol(s2);		
+                break;					
             }
         }    
     }
+	//printf("serno=%lld\n",serno);
+		
 	estimated_bandwidth = ((total_number_bytes / 1000000.0) * 8)
                              / duration;
 							 
@@ -195,10 +210,6 @@ int main(int argc, char* argv[])
 				
 	percentage = (float)(total_receive-serno) / total_receive * 100.0;
 	printf("\npacket loss percentage = %.2f%%\n", percentage);
+        printf("\nread cound=%lld,send count=%lld\n",serno,total_receive);
 	free(buffer);
 } 
-
-
-
-
-
