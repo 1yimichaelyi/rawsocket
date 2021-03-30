@@ -53,6 +53,26 @@ queue_t *rxQueue = NULL;
 //************************************************************************************
 // Timer
 //************************************************************************************
+int msleep(long msec)
+{
+    struct timespec ts;
+    int res;
+
+    if (msec < 0)
+    {
+        errno = EINVAL;
+        return -1;
+    }
+
+    ts.tv_sec = msec / 1000;
+    ts.tv_nsec = (msec % 1000) * 1000000;
+
+    do {
+        res = nanosleep(&ts, &ts);
+    } while (res && errno == EINTR);
+
+    return res;
+}
 void *Timer()
 {
     for(int i=0; i<duration; i++){
@@ -129,7 +149,7 @@ int bind_rawsocket_to_interface(char *device, int rawsock, int protocol)
 		exit(-1);
 	}
 	/* Bind our raw socket to this interface */
-	sll.sll_family = AF_PACKET;
+	sll.sll_family = PF_PACKET;
 	sll.sll_ifindex = ifr.ifr_ifindex;
 	sll.sll_protocol = htons(protocol);
 	if((bind(rawsock, (struct sockaddr *)&sll, sizeof(sll)))== -1) {
@@ -148,7 +168,7 @@ void sender()
     struct timespec start_time, end_time;
     pthread_t tid_Timer;
 
-    int sock_raw = socket(AF_PACKET, SOCK_RAW, ETH_P_ALL);
+    int sock_raw = socket(PF_PACKET, SOCK_RAW, ETH_P_ALL);
     if(sock_raw == -1) 
         printf("error in socket");
 	
@@ -156,10 +176,9 @@ void sender()
     unsigned char* sendbuff = malloc(eth_MTU*sizeof(unsigned char));
     //
     memset(sendbuff,'\0', eth_MTU);
-        // init eth1
     struct ethhdr *eth1 = (struct ethhdr *)(sendbuff);
     memcpy(eth1->h_source, mac_sender, 6);
-    eth1->h_proto = htons(ETH_P_IP);
+    eth1->h_proto = htons(ETH_P_ALL);
 
     bind_rawsocket_to_interface(ifname, sock_raw, ETH_P_ALL);         
     // init tx_result data and start timmer
@@ -175,6 +194,9 @@ void sender()
     while(Running == 1){
         // make serial number
 		serno++;
+                if(serno>500)
+                  Running=1;
+
 		sprintf(tmp, "ing-%llu", serno);
 		strcpy(sendbuff+SIZE_ETHHDR, tmp);
 
@@ -188,16 +210,18 @@ void sender()
 	sprintf(tmp, "end-%d-%lld",duration,serno);
     strcpy(sendbuff+SIZE_ETHHDR, tmp);
 			
+	sleep(5);		
 	send_len = write(sock_raw, sendbuff, data_len);
 	if(send_len < 0){
 		perror("sendto");
 		exit(-1);
 	}
 	tx_result.bytes += send_len;
-	printf("send data ok %d\n",Running);
+	printf("send data ok %d-%lld\n",Running,serno);
            
     free(sendbuff);
     close(sock_raw);
+	
 }
 //************************************************************************************
 // main
@@ -217,10 +241,10 @@ int main(int argc, char* argv[])
     printf("\n");
     // get mac (sender)
     get_sender_mac(mac_sender);
-    printf("send to mac : %.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n" , mac_sender[0], mac_sender[1], mac_sender[2], mac_sender[3], mac_sender[4], mac_sender[5]);
+    //printf("send to mac : %.2x:%.2x:%.2x:%.2x:%.2x:%.2x\n" , mac_sender[0], mac_sender[1], mac_sender[2], mac_sender[3], mac_sender[4], mac_sender[5]);
     // get MTU
     eth_MTU = getMTU(ifname);
     printf("%s  MTU : %d\n", ifname, eth_MTU);
     printf("send mac data to interface(%s) for %d seconds.....\n",ifname,duration);
     sender();
-} 
+}
